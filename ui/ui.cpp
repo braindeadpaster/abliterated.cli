@@ -1,21 +1,4 @@
-//
-// abliterated.cli, built on velo.
-//
-// Two views in one window:
-//   - the launcher: title bar, two tool cards, an options panel that animates
-//     between the tools, the launch button, and a typed status line
-//   - the chat, for either agent: messages, tool cards with the agent's
-//     permission choices, and a composer
-// Launching grows the window into the chat (the host resizes it around its
-// centre each frame from WindowSize()); Back shrinks it again. Once open, the
-// chat can be resized by its edges (SetChatSize). Its sidebar lists the working
-// folder and the folder's past sessions; the strip above the messages switches
-// model and permission mode live; typing "/" in the composer lists the agent's
-// slash commands.
-//
-// Most of it is hand-drawn with ImDrawList: this app's own furniture. The
-// options panel uses velo pages and controls, so the tool switch gets velo's
-// staggered transition for free.
+
 
 #include "velo.h"
 #include "ui.h"
@@ -51,8 +34,8 @@ using namespace velo;
 namespace
 {
     // ---- links shown in the launch prompt — point these at your own
-    const char* kRepoUrl    = "https://github.com/YOUR_NAME/abliterated.cli";
-    const char* kProfileUrl = "https://github.com/YOUR_NAME";
+    const char* kRepoUrl    = "https://github.com/braindeadpaster/abliterated.cli";
+    const char* kProfileUrl = "https://github.com/braindeadpaster";
     const char* kVersion    = "v1.1";
 
     // OpenCode's models come from `opencode models`, run on a worker thread the
