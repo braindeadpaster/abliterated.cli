@@ -1,98 +1,63 @@
 # abliterated.cli
 
-A small native launcher for coding-agent CLIs — **Claude Code**, **OpenCode**, and **oh-my-pi** — rendered as a chat inside the app.
+a clean, sleek imgui-based launcher that runs your claude / opencode cli as a chat app, with a jailbreak built in.
 
-Borderless, square, black-and-white. Built in C++ on Dear ImGui + Direct3D 11, with a custom widget layer (`velo`) sitting on top of ImGui.
-
-![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-black) ![cxx](https://img.shields.io/badge/C%2B%2B-17-black) ![renderer](https://img.shields.io/badge/renderer-D3D11-black)
+works on most models — opus 4.7 and below, and most opencode models.
 
 ---
 
-## What it does
+## what it is
 
-Pick a working folder, pick a tool, pick a model — the agent starts as a child process and the window grows to show the chat. The chat renders assistant turns as a mix of text, tool calls, and (where supported) thinking blocks, with inline permission prompts for tools the agent wants to run.
+pick a folder, pick a tool, pick a model. the agent starts in that folder and the window grows to show the chat.
 
-Two protocols drive one chat view:
+the jailbreak lives in `assets/jb.md` and is wired in through the tool's own config (opencode's `instructions`, claude's system prompt entry point) so every turn goes through it.
 
-| Backend     | Transport                                                                  | Verified against     |
-|-------------|----------------------------------------------------------------------------|----------------------|
-| Claude Code | `claude -p --output-format stream-json --input-format stream-json ...`     | Claude Code 2.1.310  |
-| OpenCode    | `opencode acp` — Agent Client Protocol (JSON-RPC 2.0, line-delimited)      | OpenCode 2.0.32      |
-| oh-my-pi    | `omp acp` — same ACP protocol                                              | OpenCode 2.0.32      |
+native windows app, black and white, square, borderless, animated. built in c++ on dear imgui + d3d11 with a small widget layer on top (`velo`).
 
-Live model switching, live permission-mode switching, slash-command discovery, past-session resume (`--resume` for Claude; `session/load` for ACP), and session deletion all work through the same UI.
+## supported
 
-Settings persist to `%APPDATA%\abliterated.cli\settings.txt`.
+- **claude code** — opus 4.7 and below, sonnet, haiku. uses the stream-json sdk protocol.
+- **opencode** — most provider/model ids opencode exposes. uses acp (agent client protocol).
+- **oh-my-pi** — same acp wire, swappable.
 
-## Features
+live model switching, live permission-mode switching, slash commands, and session resume all work through the same ui.
 
-- **Native window, not a web shell** — borderless, layered-alpha fade in/out, Windows-11 corner rounding turned off, dragged via `WM_NCHITTEST`.
-- **User-resizable chat** — `WS_THICKFRAME` with the non-client frame erased in `WM_NCCALCSIZE`, edges reported from `WM_NCHITTEST`, content re-rendered live during the drag through `WM_SIZE`.
-- **Self-resizing launcher** — the window grows around its own centre when the UI asks for more room (chat open vs. closed).
-- **Two protocols, one chat** — Claude Code's stream-json SDK and ACP (OpenCode / oh-my-pi) feed the same `chat::State`.
-- **Lock-free UI thread** — reader threads only queue raw lines; parsing and every state change happen in `Pump()` on the UI thread.
-- **Live config** — model, permission mode, and plan mode can be changed mid-session via `set_model` / `set_permission_mode` (Claude) or `session/set_config_option` (ACP).
-- **History** — reads Claude's on-disk transcripts and ACP agents' `session/list`, with per-row delete.
+## build
 
-## Building
+- windows 10 / 11
+- visual studio 2022, desktop c++ workload
+- windows sdk
 
-Requirements:
+open `abliterated.sln`, pick **release / x64**, build. output lands at `bin/release/abliterated.exe`.
 
-- Windows 10 or 11
-- Visual Studio 2022 (Desktop development with C++)
-- Windows 10 SDK or newer
-- `claude`, `opencode`, and/or `omp` on `PATH` to actually run anything
+no vcpkg, no cmake. dear imgui ships in-tree under `backend/imgui/`.
 
-Steps:
+## run
+
+`abliterated.exe`. pick a folder, pick a tool, pick a model, hit the star.
+
+the agent binaries aren't bundled — install them yourself:
 
 ```
-git clone https://github.com/<you>/abliterated.git
-cd abliterated
+npm i -g @anthropic-ai/claude-code
+npm i -g opencode-ai
 ```
 
-Open `abliterated.sln` in Visual Studio 2022, select **Release / x64**, and build. The output lands at `bin/Release/abliterated.exe`.
+make sure `claude` / `opencode` are on `PATH`. settings persist to `%APPDATA%\abliterated.cli\settings.txt`.
 
-No vcpkg, no NuGet, no CMake. Dear ImGui is bundled under `backend/imgui/`; everything else is Win32 + D3D11.
-
-## Running
-
-Launch `abliterated.exe`. Pick a folder, pick a tool, pick a model (or let the agent default), hit the star.
-
-The first time an agent asks for a tool permission, the chat shows the option list the agent sent — `allow_once`, `allow_always`, `reject_once`, `reject_always` for ACP, or the Claude Code equivalents. Click one and the agent continues.
-
-## Project layout
+## layout
 
 ```
-abliterated/
-├── main.cpp              Win32 host: window, D3D11 device, message loop, fades
-├── ui/
-│   ├── ui.h              UI surface + Host callbacks + persisted Settings
-│   └── ui.cpp            launcher screen and chat screen
-├── chat/
-│   ├── session.h         chat::State + the public API (Start/Send/Pump/...)
-│   ├── session.cpp       Claude stream-json + ACP drivers
-│   └── json.h            single-header JSON used by both drivers
-├── backend/
-│   ├── imgui/            bundled Dear ImGui (docking-free, DX11 + Win32 impls)
-│   └── velo/             custom widget layer on top of ImGui
-│       ├── velo.h
-│       ├── velo_core.cpp
-│       ├── velo_controls.cpp
-│       ├── velo_widgets.cpp
-│       ├── velo_internal.h
-│       └── velo_lucide.h
-└── assets/
-    └── fonts/            Poppins (Medium + SemiBold) under OFL
+main.cpp            win32 + d3d11 host
+ui/                 launcher and chat screens
+chat/               claude stream-json + acp drivers, one shared state
+backend/velo/       custom widget layer over imgui
+backend/imgui/      bundled dear imgui
+assets/fonts/       poppins (ofl)
+assets/jb.md        the jailbreak
 ```
 
-## Licenses
+## credits
 
-The project source is yours to license as you like. Third-party pieces bundled in-tree:
-
-- **Dear ImGui** (`backend/imgui/`) — MIT, © Omar Cornut and contributors
-- **Poppins** (`assets/fonts/`) — SIL Open Font License 1.1 (see `assets/fonts/OFL.txt`)
-
-## Notes
-
-- The agent binaries themselves are not bundled. Install them separately (`npm i -g @anthropic-ai/claude-code`, `npm i -g opencode-ai`, etc.) and make sure they're on `PATH`.
-- When npm installs a `.cmd` shim, the launcher resolves it to the real `.exe` behind it — `cmd.exe` mangles argument quoting and would corrupt the JSON-RPC stream.
+- **dear imgui** — mit, omar cornut and contributors
+- **poppins** — sil open font license 1.1

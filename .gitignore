@@ -38,5 +38,3 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Local assets (prompt file, not for public repo)
-assets/jb.md
