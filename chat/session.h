@@ -59,12 +59,23 @@ namespace chat
         bool expanded = false;
     };
 
+    // An image (or other media) riding alongside a user text message. Raw PNG
+    // bytes; session.cpp base64-encodes them into the right content block for
+    // each protocol. The UI uploads them as D3D textures lazily when first
+    // rendered, keyed on (message index, attachment index).
+    struct Attachment
+    {
+        std::vector<unsigned char> bytes;
+        std::string mime;              // "image/png", "image/jpeg", ...
+    };
+
     struct Message
     {
         enum Role { User, Assistant, Notice };
         Role role = Notice;
         std::string text;              // User / Notice
         std::vector<Block> blocks;     // Assistant
+        std::vector<Attachment> attachments;  // User
         std::string id;                // ACP message id (history replay)
         bool error = false;
         float appear = 0.0f;           // UI animation state
@@ -123,6 +134,9 @@ namespace chat
 
     bool Start(const Options& opt, std::string& err);
     void Send(const std::string& text);
+    // text may be empty if there is at least one attachment. Images go through
+    // Claude's `image` content block and ACP's `image` content block.
+    void Send(const std::string& text, const std::vector<Attachment>& atts);
     void Interrupt();
     void Respond(const std::string& permId, int optionIndex);
     void SetModel(const std::string& value);   // live, mid-session

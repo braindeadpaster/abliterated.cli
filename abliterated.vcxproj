@@ -89,6 +89,14 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
 
+  <!-- ================================================== resources -->
+  <ItemGroup>
+    <ClInclude Include="res\resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="res\abliterated.rc" />
+  </ItemGroup>
+
   <!-- ================================================== ui -->
   <ItemGroup>
     <ClCompile Include="ui\ui.cpp" />

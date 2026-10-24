@@ -8,6 +8,8 @@
 
 #pragma once
 #include "velo.h"
+#include <string>
+#include <vector>
 
 namespace ui
 {
@@ -65,4 +67,9 @@ namespace ui
     // For WM_NCHITTEST: true where a press should drag the window (the top bar,
     // minus its buttons). Client coordinates.
     bool HitTestCaption(float x, float y);
+
+    // Called from main.cpp's WM_DROPFILES. Any supported image file in the drop
+    // (png / jpg / jpeg / webp / gif) is loaded and queued as a pending
+    // attachment on the composer; non-image files are ignored.
+    void OnFilesDropped(const std::vector<std::wstring>& paths);
 }

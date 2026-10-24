@@ -28,7 +28,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <wincodec.h>
+#include <shellapi.h>
 #include <ctype.h>
+#pragma comment(lib, "windowscodecs.lib")
 
 #include <math.h>
 #include <string.h>
@@ -129,6 +132,10 @@ namespace
     // callback, because an active InputText owns its buffer until it lets go.
     std::string g_pending;
     bool        g_pendingSet = false;
+
+    // Attachments queued for the next send: images pasted (Ctrl+V) or dropped
+    // onto the window. Cleared on send; a click on a chip removes it.
+    std::vector<chat::Attachment> g_pendingAtts;
 
     // Slash-command popup.
     int  g_slashSel = 0, g_slashTop = 0;
@@ -1166,6 +1173,148 @@ namespace
         return 0;
     }
 
+    // ------------------------------------------------------- image attachments
+    // Encodes a WIC bitmap source as PNG into a byte vector, via an HGLOBAL
+    // IStream the encoder owns. Pulled out so paste and (future) drop paths
+    // share one encode path.
+    bool WicEncodePng(IWICImagingFactory* factory, IWICBitmapSource* src, std::vector<unsigned char>& out)
+    {
+        IStream* stream = nullptr;
+        if (FAILED(::CreateStreamOnHGlobal(nullptr, TRUE, &stream))) return false;
+        bool ok = false;
+        IWICBitmapEncoder* enc = nullptr;
+        if (SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &enc)))
+        {
+            if (SUCCEEDED(enc->Initialize(stream, WICBitmapEncoderNoCache)))
+            {
+                IWICBitmapFrameEncode* frame = nullptr;
+                IPropertyBag2* props = nullptr;
+                if (SUCCEEDED(enc->CreateNewFrame(&frame, &props)))
+                {
+                    frame->Initialize(props);
+                    UINT w = 0, h = 0; src->GetSize(&w, &h);
+                    frame->SetSize(w, h);
+                    WICPixelFormatGUID pf = GUID_WICPixelFormat32bppBGRA;
+                    frame->SetPixelFormat(&pf);
+                    if (SUCCEEDED(frame->WriteSource(src, nullptr)) &&
+                        SUCCEEDED(frame->Commit()) &&
+                        SUCCEEDED(enc->Commit()))
+                    {
+                        LARGE_INTEGER zero = {};
+                        stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+                        STATSTG stat = {};
+                        if (SUCCEEDED(stream->Stat(&stat, STATFLAG_NONAME)))
+                        {
+                            out.resize((size_t)stat.cbSize.QuadPart);
+                            ULONG read = 0;
+                            if (SUCCEEDED(stream->Read(out.data(), (ULONG)out.size(), &read)) && read == out.size())
+                                ok = true;
+                        }
+                    }
+                    if (props) props->Release();
+                    frame->Release();
+                }
+            }
+            enc->Release();
+        }
+        stream->Release();
+        return ok;
+    }
+
+    // Pulls an image off the clipboard. Prefers a raw CF_PNG blob (what browsers
+    // and modern editors publish); falls back to CF_BITMAP re-encoded through
+    // WIC so bitmaps from Snipping Tool / Paint still work.
+    bool PasteClipboardImage()
+    {
+        if (!::OpenClipboard(nullptr)) return false;
+        bool added = false;
+
+        static const UINT cfPng = ::RegisterClipboardFormatW(L"PNG");
+        if (cfPng && ::IsClipboardFormatAvailable(cfPng))
+        {
+            HGLOBAL hg = (HGLOBAL)::GetClipboardData(cfPng);
+            if (hg)
+            {
+                void* src = ::GlobalLock(hg);
+                SIZE_T n = ::GlobalSize(hg);
+                if (src && n > 8)
+                {
+                    chat::Attachment a;
+                    a.mime = "image/png";
+                    a.bytes.assign((unsigned char*)src, (unsigned char*)src + n);
+                    g_pendingAtts.push_back(std::move(a));
+                    added = true;
+                }
+                if (src) ::GlobalUnlock(hg);
+            }
+        }
+
+        if (!added && ::IsClipboardFormatAvailable(CF_BITMAP))
+        {
+            HBITMAP hbmp = (HBITMAP)::GetClipboardData(CF_BITMAP);
+            if (hbmp)
+            {
+                IWICImagingFactory* factory = nullptr;
+                if (SUCCEEDED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                                 IID_PPV_ARGS(&factory))))
+                {
+                    IWICBitmap* wicBmp = nullptr;
+                    if (SUCCEEDED(factory->CreateBitmapFromHBITMAP(hbmp, nullptr, WICBitmapUsePremultipliedAlpha, &wicBmp)))
+                    {
+                        std::vector<unsigned char> png;
+                        if (WicEncodePng(factory, wicBmp, png) && !png.empty())
+                        {
+                            chat::Attachment a;
+                            a.mime = "image/png";
+                            a.bytes = std::move(png);
+                            g_pendingAtts.push_back(std::move(a));
+                            added = true;
+                        }
+                        wicBmp->Release();
+                    }
+                    factory->Release();
+                }
+            }
+        }
+
+        ::CloseClipboard();
+        return added;
+    }
+
+    // Reads an image file as-is (no re-encode) when its extension is one the
+    // target protocols accept. Cap at 20 MB so a mis-dropped giant file never
+    // stalls the UI.
+    bool AttachFromFile(const std::wstring& path)
+    {
+        std::wstring lower = path;
+        for (auto& c : lower) c = (wchar_t)towlower(c);
+        auto ends = [&](const wchar_t* ext) -> bool {
+            size_t n = wcslen(ext);
+            return lower.size() > n && lower.compare(lower.size() - n, n, ext) == 0;
+        };
+        std::string mime;
+        if      (ends(L".png"))                       mime = "image/png";
+        else if (ends(L".jpg") || ends(L".jpeg"))     mime = "image/jpeg";
+        else if (ends(L".webp"))                      mime = "image/webp";
+        else if (ends(L".gif"))                       mime = "image/gif";
+        else return false;
+
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f) return false;
+        fseek(f, 0, SEEK_END);
+        long n = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (n <= 0 || n > 20 * 1024 * 1024) { fclose(f); return false; }
+        chat::Attachment a;
+        a.mime = std::move(mime);
+        a.bytes.resize((size_t)n);
+        size_t rd = fread(a.bytes.data(), 1, (size_t)n, f);
+        fclose(f);
+        if (rd != (size_t)n) return false;
+        g_pendingAtts.push_back(std::move(a));
+        return true;
+    }
+
     std::string FirstLineOf(const std::string& s)
     {
         size_t nl = s.find('\n');
@@ -1289,12 +1438,49 @@ namespace
         // Frame first: the input draws its own text on top (a stock ImGui widget).
         dl->AddRectFilled(bmn, bmx, Fade(t.Element, a));
         dl->AddRect(bmn, bmx, Fade(LerpCol(t.Border, t.Accent, focus * 0.8f), a));
+
+        // Attachment chips row along the top of the frame, if any are pending.
+        // The input underneath is shifted down and shortened by chipRowH.
+        float chipRowH = 0.0f;
+        if (!g_pendingAtts.empty())
+        {
+            chipRowH = 28.0f;
+            float cx = bmn.x + 10.0f;
+            float cy = bmn.y + 5.0f;
+            for (size_t i = 0; i < g_pendingAtts.size();)
+            {
+                char label[64];
+                snprintf(label, sizeof(label), "image . %.0f KB  x", g_pendingAtts[i].bytes.size() / 1024.0f);
+                float tw = TextW(g_body, 11.5f, label);
+                float chipW = tw + 14.0f;
+                if (cx + chipW > bmx.x - 10.0f) break;
+                ImVec2 cmn(cx, cy), cmx(cx + chipW, cy + 20.0f);
+                bool hover = ImGui::IsMouseHoveringRect(cmn, cmx);
+                dl->AddRectFilled(cmn, cmx, Fade(hover ? t.Risky : t.Border, a * (hover ? 0.6f : 0.5f)));
+                Text(dl, g_body, 11.5f, ImVec2(cmn.x + 7.0f, cmn.y + 3.0f), Fade(t.Text, a), label);
+                if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    g_pendingAtts.erase(g_pendingAtts.begin() + i);
+                    continue;
+                }
+                cx += chipW + 6.0f;
+                i++;
+            }
+        }
+
+        // Ctrl+V: if the clipboard holds an image, queue it as an attachment.
+        // The InputText still runs its own text-paste in the same frame — if
+        // the clipboard has both bytes and text (common for web copies), both
+        // land, which is what we want.
+        if (canType && wasActive && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false))
+            PasteClipboardImage();
+
         if (!g_input[0])
         {
             char hint[128];
             snprintf(hint, sizeof(hint), "Message %s...   (/ for commands, Enter to send, Ctrl+Enter for a new line)", AgentName());
             std::string shown = Ellipsize(g_body, 14.0f, canType ? hint : "session ended - Back to start a new one", bmx.x - bmn.x - 24.0f);
-            Text(dl, g_body, 14.0f, ImVec2(bmn.x + 12.0f, bmn.y + 11.0f), Fade(t.TextInactive, a * 0.8f), shown.c_str());
+            Text(dl, g_body, 14.0f, ImVec2(bmn.x + 12.0f, bmn.y + 11.0f + chipRowH), Fade(t.TextInactive, a * 0.8f), shown.c_str());
         }
 
         // Slash commands: "/" plus a word, no space yet.
@@ -1316,7 +1502,7 @@ namespace
         else
             g_slashSel = g_slashTop = 0;
 
-        ImGui::SetCursorScreenPos(ImVec2(bmn.x + 10.0f, bmn.y + 9.0f));
+        ImGui::SetCursorScreenPos(ImVec2(bmn.x + 10.0f, bmn.y + 9.0f + chipRowH));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Fade(t.Text, a)));
         ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, IM_COL32(0, 0, 0, 0));
@@ -1326,7 +1512,7 @@ namespace
         if (g_focusInput && canType) { ImGui::SetKeyboardFocusHere(); g_focusInput = false; }
         ImGui::BeginDisabled(!canType);
         bool enter = ImGui::InputTextMultiline("##compose", g_input, sizeof(g_input),
-                                               ImVec2(bmx.x - bmn.x - 20.0f, bmx.y - bmn.y - 18.0f),
+                                               ImVec2(bmx.x - bmn.x - 20.0f, bmx.y - bmn.y - 18.0f - chipRowH),
                                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine |
                                                ImGuiInputTextFlags_CallbackAlways, ComposeCallback);
         ImGui::EndDisabled();
@@ -1352,7 +1538,7 @@ namespace
         bool busy = st.busy;
         bool hasText = false;
         for (const char* c = g_input; *c; c++) if (*c != ' ' && *c != '\n' && *c != '\r' && *c != '\t') { hasText = true; break; }
-        bool canSend = canType && st.ready && !busy && hasText;
+        bool canSend = canType && st.ready && !busy && (hasText || !g_pendingAtts.empty());
         ImVec2 smn(mx.x - sendW, mn.y), smx = mx;
         bool clicked = WipeButton("##send", smn, smx, "", a, canSend || busy, Glyph::None, false, 14.0f, canSend || busy);
         // Icon over the button: an up arrow to send, a square to stop.
@@ -1377,7 +1563,8 @@ namespace
             // never reach the agent.
             if (!IsClaude() && msg == "/new") { StartChat(); return; }
             if (!IsClaude() && msg == "/sessions") { g_sideTab = 1; g_historyFor = -1; return; }
-            chat::Send(msg);
+            chat::Send(msg, g_pendingAtts);
+            g_pendingAtts.clear();
             g_forceScroll = true;
         }
         if (enter) g_focusInput = true;      // Enter drops focus; take it straight back
@@ -2017,4 +2204,9 @@ void ui::Draw()
     ImGui::PopStyleVar(3);
 
     Prompt();
+}
+
+void ui::OnFilesDropped(const std::vector<std::wstring>& paths)
+{
+    for (const auto& p : paths) AttachFromFile(p);
 }

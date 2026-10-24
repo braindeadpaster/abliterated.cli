@@ -14,6 +14,16 @@
     <Filter Include="backend\imgui">
       <UniqueIdentifier>{b2000000-0000-0000-0000-000000000004}</UniqueIdentifier>
     </Filter>
+    <Filter Include="resources">
+      <UniqueIdentifier>{b2000000-0000-0000-0000-000000000005}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="res\resource.h"><Filter>resources</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="res\abliterated.rc"><Filter>resources</Filter></ResourceCompile>
   </ItemGroup>
 
   <ItemGroup>

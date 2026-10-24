@@ -19,6 +19,7 @@
 #include "velo.h"
 #include "ui.h"
 #include "chat/session.h"
+#include "res/resource.h"
 
 #include <d3d11.h>
 #include <dwmapi.h>
@@ -29,6 +30,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <vector>
+#include <string>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "ole32.lib")
@@ -363,6 +365,25 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // The size loop is modal; draw from here so the content follows the edge.
         if (g_sizing && g_device) RenderFrame();
         return 0;
+    case WM_DROPFILES:
+    {
+        // Drag-drop onto the window: hand image paths to the composer.
+        // Non-image extensions are filtered in ui::OnFilesDropped.
+        HDROP hDrop = (HDROP)wParam;
+        UINT count = ::DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+        std::vector<std::wstring> paths;
+        paths.reserve(count);
+        for (UINT i = 0; i < count; i++)
+        {
+            UINT need = ::DragQueryFileW(hDrop, i, nullptr, 0);
+            std::wstring p(need, L'\0');
+            ::DragQueryFileW(hDrop, i, p.data(), need + 1);
+            paths.push_back(std::move(p));
+        }
+        ::DragFinish(hDrop);
+        ui::OnFilesDropped(paths);
+        return 0;
+    }
     case WM_SYSCOMMAND:
         if ((wParam & 0xfff0) == SC_KEYMENU) return 0;      // no Alt menu
         break;
@@ -441,9 +462,10 @@ static int Run()
     for (int i = 1; i < __argc && __wargv; i++)
         if (wcscmp(__wargv[i], L"--frames") == 0 && i + 1 < __argc) frameLimit = _wtoi(__wargv[i + 1]);
 
+    HICON hAppIcon = ::LoadIconW(::GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP));
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC | CS_DROPSHADOW, WndProc, 0L, 0L,
-                       ::GetModuleHandleW(nullptr), nullptr, ::LoadCursorW(nullptr, IDC_ARROW),
-                       nullptr, nullptr, L"abliterated_cli", nullptr };
+                       ::GetModuleHandleW(nullptr), hAppIcon, ::LoadCursorW(nullptr, IDC_ARROW),
+                       nullptr, nullptr, L"abliterated_cli", hAppIcon };
     ::RegisterClassExW(&wc);
 
     RECT wa;
@@ -468,6 +490,7 @@ static int Run()
     }
     ::ShowWindow(g_hwnd, SW_SHOWDEFAULT);
     ::UpdateWindow(g_hwnd);
+    ::DragAcceptFiles(g_hwnd, TRUE);   // enables WM_DROPFILES for image attachments
 
     ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 

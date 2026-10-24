@@ -11,6 +11,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shlobj.h>
+#include "../res/resource.h"
 
 #include <algorithm>
 #include <atomic>
@@ -945,9 +947,40 @@ namespace chat
 
         bool Exists(const std::wstring& p) { return ::GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
 
-        // Resolve assets\jb.md next to the exe, two or three levels up (bin\Release
-        // builds). Matches main.cpp's FindAsset, duplicated here so session.cpp has
-        // no dependency on the host.
+        // Writes the embedded IDR_JB_MD resource to
+        // %LOCALAPPDATA%\abliterated.cli\jb.md and returns that path. Overwrites
+        // every launch so a newer exe always wins over an older extracted copy.
+        bool ExtractJb(std::wstring& out)
+        {
+            HRSRC hRes = ::FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_JB_MD), RT_RCDATA);
+            if (!hRes) return false;
+            HGLOBAL hGlobal = ::LoadResource(nullptr, hRes);
+            if (!hGlobal) return false;
+            const void* data = ::LockResource(hGlobal);
+            DWORD size = ::SizeofResource(nullptr, hRes);
+            if (!data || !size) return false;
+
+            PWSTR appData = nullptr;
+            if (FAILED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &appData)) || !appData)
+                return false;
+            std::wstring dir = appData;
+            ::CoTaskMemFree(appData);
+            dir += L"\\abliterated.cli";
+            ::CreateDirectoryW(dir.c_str(), nullptr);
+            std::wstring path = dir + L"\\jb.md";
+
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return false;
+            fwrite(data, 1, size, f);
+            fclose(f);
+            out = path;
+            return true;
+        }
+
+        // Resolve the jailbreak. For dev builds (running out of bin\Release) an
+        // on-disk assets\jb.md next to the exe or a few levels up wins, so edits
+        // land without a rebuild. For a shipped exe with nothing beside it, the
+        // embedded RCDATA copy is extracted to %LOCALAPPDATA%.
         bool FindJb(std::wstring& out)
         {
             wchar_t exePath[MAX_PATH] = {};
@@ -961,7 +994,7 @@ namespace chat
                 swprintf_s(buf, L"%s%s\\assets\\jb.md", exePath, u);
                 if (Exists(buf)) { out = buf; return true; }
             }
-            return false;
+            return ExtractJb(out);
         }
 
         // Doubles every backslash so a Windows path can be embedded in a JSON string.
@@ -1374,21 +1407,101 @@ namespace chat
         g_s.revision++;
     }
 
-    void Send(const std::string& text)
+    // Standard base64, no line breaks. Used for inlining image bytes into the
+    // Claude / ACP content blocks.
+    static std::string Base64(const unsigned char* data, size_t n)
     {
-        if (!g_p || text.empty() || !g_s.ready || g_s.busy) return;
+        static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve(((n + 2) / 3) * 4);
+        size_t i = 0;
+        for (; i + 2 < n; i += 3)
+        {
+            unsigned v = (unsigned)data[i] << 16 | (unsigned)data[i + 1] << 8 | (unsigned)data[i + 2];
+            out += T[(v >> 18) & 63]; out += T[(v >> 12) & 63];
+            out += T[(v >> 6) & 63];  out += T[v & 63];
+        }
+        if (i < n)
+        {
+            unsigned v = (unsigned)data[i] << 16 | (i + 1 < n ? (unsigned)data[i + 1] << 8 : 0);
+            out += T[(v >> 18) & 63]; out += T[(v >> 12) & 63];
+            out += (i + 1 < n) ? T[(v >> 6) & 63] : '=';
+            out += '=';
+        }
+        return out;
+    }
+
+    void Send(const std::string& text) { Send(text, {}); }
+
+    void Send(const std::string& text, const std::vector<Attachment>& atts)
+    {
+        if (!g_p || !g_s.ready || g_s.busy) return;
+        if (text.empty() && atts.empty()) return;
+
         Message m;
         m.role = Message::User;
         m.text = text;
+        m.attachments = atts;
         g_s.msgs.push_back(m);
         g_s.busy = true;
         g_s.revision++;
+
         if (g_s.backend == Backend::Claude)
-            WriteLine("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":" + json::Quote(text) +
+        {
+            // Claude SDK: user message content is either a plain string (old
+            // path) or an array of blocks. Switch to the array shape as soon
+            // as any attachment is present so images ride alongside the text.
+            std::string content;
+            if (atts.empty())
+            {
+                content = json::Quote(text);
+            }
+            else
+            {
+                content = "[";
+                bool first = true;
+                if (!text.empty())
+                {
+                    content += "{\"type\":\"text\",\"text\":" + json::Quote(text) + "}";
+                    first = false;
+                }
+                for (const auto& a : atts)
+                {
+                    if (!first) content += ",";
+                    first = false;
+                    std::string mime = a.mime.empty() ? "image/png" : a.mime;
+                    content += "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":" +
+                               json::Quote(mime) + ",\"data\":\"" +
+                               Base64(a.bytes.data(), a.bytes.size()) + "\"}}";
+                }
+                content += "]";
+            }
+            WriteLine("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":" + content +
                       "},\"parent_tool_use_id\":null,\"session_id\":\"default\"}");
+        }
         else
+        {
+            // ACP: prompt is always an array of content blocks. Text first,
+            // then one image block per attachment.
+            std::string prompt = "[";
+            bool first = true;
+            if (!text.empty())
+            {
+                prompt += "{\"type\":\"text\",\"text\":" + json::Quote(text) + "}";
+                first = false;
+            }
+            for (const auto& a : atts)
+            {
+                if (!first) prompt += ",";
+                first = false;
+                std::string mime = a.mime.empty() ? "image/png" : a.mime;
+                prompt += "{\"type\":\"image\",\"mimeType\":" + json::Quote(mime) +
+                          ",\"data\":\"" + Base64(a.bytes.data(), a.bytes.size()) + "\"}";
+            }
+            prompt += "]";
             g_idPrompt = Rpc("session/prompt", "{\"sessionId\":" + json::Quote(g_acpSession) +
-                             ",\"prompt\":[{\"type\":\"text\",\"text\":" + json::Quote(text) + "}]}");
+                             ",\"prompt\":" + prompt + "}");
+        }
     }
 
     void Interrupt()

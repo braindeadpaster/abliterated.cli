@@ -1,4 +1,20 @@
-# abliterated.cli
+<p align="center">
+  <img src="assets/logo.png" alt="abliterated.cli" width="640">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-windows%2010%20%2F%2011-000000?style=for-the-badge" alt="platform">
+  <img src="https://img.shields.io/badge/c%2B%2B-17-000000?style=for-the-badge&logo=cplusplus&logoColor=white" alt="c++17">
+  <img src="https://img.shields.io/badge/renderer-d3d11-000000?style=for-the-badge" alt="d3d11">
+  <img src="https://img.shields.io/badge/ui-dear%20imgui-000000?style=for-the-badge" alt="dear imgui">
+  <img src="https://img.shields.io/badge/jailbreak-built--in-000000?style=for-the-badge" alt="jailbreak">
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/claude%20code-opus%204.7%20and%20below-ffffff?style=flat-square&labelColor=000000" alt="claude code">
+  <img src="https://img.shields.io/badge/opencode-acp-ffffff?style=flat-square&labelColor=000000" alt="opencode acp">
+  <img src="https://img.shields.io/badge/oh--my--pi-acp-ffffff?style=flat-square&labelColor=000000" alt="omp acp">
+</p>
 
 a clean, sleek imgui-based launcher that runs your claude / opencode cli as a chat app, with a jailbreak built in.
 
@@ -10,7 +26,7 @@ works on most models — opus 4.7 and below, and most opencode models.
 
 pick a folder, pick a tool, pick a model. the agent starts in that folder and the window grows to show the chat.
 
-the jailbreak lives in `assets/jb.md` and is wired in through the tool's own config (opencode's `instructions`, claude's system prompt entry point) so every turn goes through it.
+the jailbreak is embedded in the exe as a win32 resource (`assets/jb.md` → `IDR_JB_MD`). at launch it's extracted to `%LOCALAPPDATA%\abliterated.cli\jb.md` and wired in through each tool's own config — claude gets `--append-system-prompt-file`, opencode gets a workspace `opencode.jsonc` with `instructions`. dev builds that still have `assets/jb.md` next to the exe use that copy instead, so you can edit without a rebuild.
 
 native windows app, black and white, square, borderless, animated. built in c++ on dear imgui + d3d11 with a small widget layer on top (`velo`).
 
@@ -21,6 +37,8 @@ native windows app, black and white, square, borderless, animated. built in c++ 
 - **oh-my-pi** — same acp wire, swappable.
 
 live model switching, live permission-mode switching, slash commands, and session resume all work through the same ui.
+
+attach images with **Ctrl+V** (clipboard, including Snipping Tool) or by **dragging image files** (png / jpg / jpeg / webp / gif) onto the window. attached images show as chips above the composer and are sent inline — claude as `image` content blocks, acp as `image` content blocks.
 
 ## build
 
@@ -54,7 +72,11 @@ chat/               claude stream-json + acp drivers, one shared state
 backend/velo/       custom widget layer over imgui
 backend/imgui/      bundled dear imgui
 assets/fonts/       poppins (ofl)
-assets/jb.md        the jailbreak
+assets/logo.png     banner (readme header)
+assets/icon.png     star glyph (source for the exe icon)
+assets/icon.ico     multi-size app icon (256/128/64/48/32/16)
+assets/jb.md        the jailbreak (embedded into the exe via res/abliterated.rc)
+res/                resource script and ids
 ```
 
 ## credits
