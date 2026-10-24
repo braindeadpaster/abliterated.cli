@@ -1,0 +1,42 @@
+# Build output
+bin/
+obj/
+x64/
+x86/
+Debug/
+Release/
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.obj
+*.exp
+*.iobj
+*.ipdb
+*.tlog
+*.log
+*.idb
+*.vcxproj.user
+*.aps
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vscode/
+*.VC.db
+*.VC.opendb
+
+# IDE / editor
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local assets (prompt file, not for public repo)
+assets/jb.md
