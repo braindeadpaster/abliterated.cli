@@ -97,6 +97,10 @@ namespace chat
         // from fixed lists; an ACP agent's from its configOptions.
         std::vector<Choice> models, modes;
         std::string modelValue, modeValue;
+        // Reasoning effort, when the agent offers it for the current model
+        // (OpenCode: configId "effort"; the list changes with the model).
+        std::vector<Choice> efforts;
+        std::string effortValue;
 
         std::vector<Command> commands;
         std::vector<SessionInfo> history;
@@ -141,6 +145,7 @@ namespace chat
     void Respond(const std::string& permId, int optionIndex);
     void SetModel(const std::string& value);   // live, mid-session
     void SetMode(const std::string& value);
+    void SetEffort(const std::string& value);  // ACP agents only
     // Refills State::history: Claude's transcripts on disk, or the running ACP
     // agent's session/list.
     void RefreshHistory();
