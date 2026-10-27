@@ -1,4 +1,21 @@
-
+//
+// abliterated.cli, built on velo.
+//
+// Two views in one window:
+//   - the launcher: title bar, two tool cards, an options panel that animates
+//     between the tools, the launch button, and a typed status line
+//   - the chat, for either agent: messages, tool cards with the agent's
+//     permission choices, and a composer
+// Launching grows the window into the chat (the host resizes it around its
+// centre each frame from WindowSize()); Back shrinks it again. Once open, the
+// chat can be resized by its edges (SetChatSize). Its sidebar lists the working
+// folder and the folder's past sessions; the strip above the messages switches
+// model and permission mode live; typing "/" in the composer lists the agent's
+// slash commands.
+//
+// Most of it is hand-drawn with ImDrawList: this app's own furniture. The
+// options panel uses velo pages and controls, so the tool switch gets velo's
+// staggered transition for free.
 
 #include "velo.h"
 #include "ui.h"
@@ -1935,6 +1952,10 @@ namespace
         };
         Picker("##stripmodel", "MODEL", st.models, st.modelValue, 200.0f, ChooseModel);
         Picker("##stripmode", IsClaude() ? "PERMISSIONS" : "MODE", st.modes, st.modeValue, 160.0f, ChooseMode);
+        // Only when the agent offers effort for the current model.
+        if (!IsClaude() && !st.efforts.empty())
+            Picker("##stripeffort", "EFFORT", st.efforts, st.effortValue, 120.0f,
+                   [](const std::string& v) { chat::SetEffort(v); });
 
         char right[160], ctx[32] = "";
         const char* state = !st.running ? "ended" : !st.ready ? "starting" : st.busy ? "working" : "ready";
