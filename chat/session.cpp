@@ -56,6 +56,7 @@ namespace chat
         int         g_idInit = -1, g_idNew = -1, g_idPrompt = -1, g_idList = -1;
         std::vector<int> g_configIds;             // set_config_option calls in flight
         std::vector<int> g_deleteIds;             // session/delete calls in flight
+        std::string g_effortId;                   // the agent's configId for effort
         int         g_startupConfigs = 0;         // of those, how many gate "ready"
         bool        g_canLoad = false;            // agent advertised loadSession
         bool        g_loading = false;            // session/load replaying history
@@ -568,16 +569,20 @@ namespace chat
                 ",\"configId\":" + json::Quote(configId) + ",\"value\":" + json::Quote(value) + "}"));
         }
 
-        // Reads the model and mode lists, and what's selected, out of a
+        // Reads the model, mode and effort lists, and what's selected, out of a
         // configOptions array.
         void TakeConfig(const json::Value& opts)
         {
+            if (!opts.IsArray() || opts.arr.empty()) return;
+            bool sawEffort = false;
             for (const auto& co : opts.arr)
             {
                 const std::string& id = co["id"].Str();
-                bool isModel = (id == "model" || co["category"].Str() == "model");
-                bool isMode = (id == "mode" || co["category"].Str() == "mode");
-                if (!isModel && !isMode) continue;
+                const std::string& cat = co["category"].Str();
+                bool isModel = (id == "model" || cat == "model");
+                bool isMode = (id == "mode" || cat == "mode");
+                bool isEffort = (id == "effort" || cat == "thought_level");
+                if (!isModel && !isMode && !isEffort) continue;
                 std::vector<Choice> list;
                 for (const auto& o : co["options"].arr)
                     list.push_back({ o["value"].Str(), o["name"].Str().empty() ? o["value"].Str() : o["name"].Str() });
@@ -587,12 +592,21 @@ namespace chat
                     g_s.modelValue = co["currentValue"].Str();
                     g_s.model = g_s.modelValue;
                 }
-                else
+                else if (isMode)
                 {
                     g_s.modes = list;
                     g_s.modeValue = co["currentValue"].Str();
                 }
+                else
+                {
+                    sawEffort = true;
+                    g_effortId = id;
+                    g_s.efforts = list;
+                    g_s.effortValue = co["currentValue"].Str();
+                }
             }
+            // The list is per model: a model without effort levels drops the option.
+            if (!sawEffort) { g_s.efforts.clear(); g_s.effortValue.clear(); }
         }
 
         // True (and forgets it) if `rid` answers one of our session/delete calls.
@@ -1285,6 +1299,7 @@ namespace chat
         g_idInit = g_idNew = g_idPrompt = g_idList = -1;
         g_configIds.clear();
         g_deleteIds.clear();
+        g_effortId.clear();
         g_startupConfigs = 0;
         g_canLoad = g_loading = false;
         g_acpSession.clear();
@@ -1354,6 +1369,14 @@ namespace chat
         }
         else if (!g_acpSession.empty())
             SetConfig("mode", value);
+    }
+
+    void SetEffort(const std::string& value)
+    {
+        if (!g_p || value.empty() || value == g_s.effortValue) return;
+        if (g_s.backend == Backend::Claude || g_acpSession.empty() || g_effortId.empty()) return;
+        g_s.effortValue = value;
+        SetConfig(g_effortId.c_str(), value);
     }
 
     void RefreshHistory()
